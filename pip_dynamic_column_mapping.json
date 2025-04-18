@@ -1,0 +1,327 @@
+{
+    "name": "pip_dynamic_column_mapping",
+    "properties": {
+        "activities": [
+            {
+                "name": "Get Metadata CSV",
+                "type": "GetMetadata",
+                "dependsOn": [],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "dataset": {
+                        "referenceName": "adls_csv",
+                        "type": "DatasetReference",
+                        "parameters": {
+                            "filename": "customers2"
+                        }
+                    },
+                    "fieldList": [
+                        "structure"
+                    ],
+                    "storeSettings": {
+                        "type": "AzureBlobFSReadSettings",
+                        "enablePartitionDiscovery": false
+                    },
+                    "formatSettings": {
+                        "type": "DelimitedTextReadSettings"
+                    }
+                }
+            },
+            {
+                "name": "Set variable column names",
+                "type": "SetVariable",
+                "dependsOn": [
+                    {
+                        "activity": "Get Metadata CSV",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "variableName": "columnnames",
+                    "value": {
+                        "value": "@activity('Get Metadata CSV').output.structure",
+                        "type": "Expression"
+                    }
+                }
+            },
+            {
+                "name": "ForEach1",
+                "type": "ForEach",
+                "dependsOn": [
+                    {
+                        "activity": "Set variable column names",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "userProperties": [],
+                "typeProperties": {
+                    "items": {
+                        "value": "@variables('columnnames')\n",
+                        "type": "Expression"
+                    },
+                    "activities": [
+                        {
+                            "name": "Append variable1",
+                            "type": "AppendVariable",
+                            "dependsOn": [],
+                            "userProperties": [],
+                            "typeProperties": {
+                                "variableName": "columnNameList",
+                                "value": "@item().name\n"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "name": "Set variable1",
+                "type": "SetVariable",
+                "dependsOn": [
+                    {
+                        "activity": "ForEach1",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "variableName": "columnNameString",
+                    "value": "@join(variables('columnNameList'), ',')\n"
+                }
+            },
+            {
+                "name": "Set variable2",
+                "type": "SetVariable",
+                "dependsOn": [
+                    {
+                        "activity": "Set variable1",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "variableName": "StagingTableName",
+                    "value": {
+                        "value": "@concat(pipeline().parameters.TableName, '_staging')",
+                        "type": "Expression"
+                    }
+                }
+            },
+            {
+                "name": "SP Staging Creation",
+                "type": "SqlServerStoredProcedure",
+                "dependsOn": [
+                    {
+                        "activity": "Set variable2",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "storedProcedureName": "[dbo].[sp_dynamic_stg_table_creation]",
+                    "storedProcedureParameters": {
+                        "ColumnList": {
+                            "value": "@variables('columnNameString')\n",
+                            "type": "String"
+                        },
+                        "SchemaName": {
+                            "value": "@pipeline().parameters.Schema",
+                            "type": "String"
+                        },
+                        "StagingTableName": {
+                            "value": {
+                                "value": "@variables('StagingTableName')",
+                                "type": "Expression"
+                            },
+                            "type": "String"
+                        }
+                    }
+                },
+                "linkedServiceName": {
+                    "referenceName": "ls_sql_db",
+                    "type": "LinkedServiceReference"
+                }
+            },
+            {
+                "name": "Copy data1",
+                "type": "Copy",
+                "dependsOn": [
+                    {
+                        "activity": "SP Staging Creation",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "source": {
+                        "type": "DelimitedTextSource",
+                        "storeSettings": {
+                            "type": "AzureBlobFSReadSettings",
+                            "recursive": true,
+                            "enablePartitionDiscovery": false
+                        },
+                        "formatSettings": {
+                            "type": "DelimitedTextReadSettings"
+                        }
+                    },
+                    "sink": {
+                        "type": "AzureSqlSink",
+                        "writeBehavior": "insert",
+                        "sqlWriterUseTableLock": true,
+                        "tableOption": "autoCreate",
+                        "disableMetricsCollection": false
+                    },
+                    "enableStaging": false,
+                    "translator": {
+                        "type": "TabularTranslator",
+                        "typeConversion": true,
+                        "typeConversionSettings": {
+                            "allowDataTruncation": true,
+                            "treatBooleanAsNumber": false
+                        }
+                    }
+                },
+                "inputs": [
+                    {
+                        "referenceName": "adls_csv",
+                        "type": "DatasetReference",
+                        "parameters": {
+                            "filename": "customers2"
+                        }
+                    }
+                ],
+                "outputs": [
+                    {
+                        "referenceName": "ds_sql_db",
+                        "type": "DatasetReference",
+                        "parameters": {
+                            "schema": {
+                                "value": "@pipeline().parameters.Schema",
+                                "type": "Expression"
+                            },
+                            "Table": {
+                                "value": "@pipeline().parameters.TableName",
+                                "type": "Expression"
+                            }
+                        }
+                    }
+                ]
+            },
+            {
+                "name": "SP Col Compare and Insert Data",
+                "type": "SqlServerStoredProcedure",
+                "dependsOn": [
+                    {
+                        "activity": "Copy data1",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "userProperties": [],
+                "typeProperties": {
+                    "storedProcedureName": "[dbo].[sp_dyn_columns_comparison]",
+                    "storedProcedureParameters": {
+                        "TableName": {
+                            "value": {
+                                "value": "@pipeline().parameters.TableName",
+                                "type": "Expression"
+                            },
+                            "type": "String"
+                        },
+                        "SchemaName": {
+                            "value": "@pipeline().parameters.Schema",
+                            "type": "String"
+                        },
+                        "StagingTableName": {
+                            "value": {
+                                "value": "@variables('StagingTableName')",
+                                "type": "Expression"
+                            },
+                            "type": "String"
+                        }
+                    }
+                },
+                "linkedServiceName": {
+                    "referenceName": "ls_sql_db",
+                    "type": "LinkedServiceReference"
+                }
+            }
+        ],
+        "parameters": {
+            "Schema": {
+                "type": "string"
+            },
+            "TableName": {
+                "type": "string"
+            }
+        },
+        "variables": {
+            "columnnames": {
+                "type": "Array"
+            },
+            "columnNameList": {
+                "type": "Array"
+            },
+            "columnNameString": {
+                "type": "String"
+            },
+            "StagingTableName": {
+                "type": "String"
+            }
+        },
+        "annotations": []
+    }
+}
